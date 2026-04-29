@@ -30,17 +30,13 @@ def get_state():
 def save_state(data):
     with open(STATE_FILE, "w") as f: json.dump(data, f)
 
-@tasks.loop(seconds=10)
-async def trading_loop():
-    data = get_state()
-    if not data.get("running", False): return
-    
-    channel = bot.get_channel(CHANNEL_ID)
-    if not channel: return
-
-    for symbol in ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'PEPE/USDT', 'DOGE/USDT', 'ADA/USDT', 'BNB/USDT', 'DOT/USDT']:
+def run_trading_logic(data):
+    # Cette fonction tourne dans un thread séparé
+    collector = DataCollector()
+    results = []
+    for symbol in ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'BNB/USDT']:
         try:
-            df = DataCollector().get_latest_candles(symbol, timeframe='15m', limit=50)
+            df = collector.get_latest_candles(symbol, timeframe='15m', limit=50)
             engine = TJREngine(df)
             signal = engine.detect_signal()
             price = df.iloc[-1]['close']
@@ -51,8 +47,7 @@ async def trading_loop():
                 if data['capital'] >= (price * size):
                     data['positions'][symbol] = {'size': size, 'entry': price, 'side': 'LONG'}
                     data['capital'] -= (price * size)
-                    save_state(data)
-                    await channel.send(f"💎 **LONG {symbol}** | Prix: {price:.2f}$")
+                    results.append(f"💎 **LONG {symbol}** | Prix: {price:.2f}$")
 
             # VENTE
             elif symbol in data['positions']:
@@ -61,9 +56,22 @@ async def trading_loop():
                 if abs(pnl) > 5:
                     data['capital'] += (price * pos['size'] + pnl)
                     del data['positions'][symbol]
-                    save_state(data)
-                    await channel.send(f"✅ **VENTE {symbol}** | PnL: {pnl:.2f}$ | Solde: {data['capital']:.2f}$")
+                    results.append(f"✅ **VENTE {symbol}** | PnL: {pnl:.2f}$ | Solde: {data['capital']:.2f}$")
         except Exception as e: print(f"Err {symbol}: {e}")
+    return data, results
+
+@tasks.loop(seconds=20)
+async def trading_loop():
+    data = get_state()
+    if not data.get("running", False): return
+    
+    # Exécution non-bloquante
+    data, results = await asyncio.to_thread(run_trading_logic, data)
+    save_state(data)
+    
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel:
+        for msg in results: await channel.send(msg)
 
 class MainView(ui.View):
     @ui.button(label="🟢 START", style=discord.ButtonStyle.green)
@@ -78,21 +86,13 @@ class MainView(ui.View):
 
     @ui.button(label="📊 STATS", style=discord.ButtonStyle.blurple)
     async def stats(self, interaction, button):
-        # 1. Réponse immédiate pour éviter le timeout
         await interaction.response.defer(ephemeral=False)
-        
-        # 2. Maintenant on calcule et on envoie la mise à jour
         d = get_state()
-        msg = f"💰 **Wallet: {d['capital']:.2f}$** | Actif: {d['running']}\n"
-        
+        msg = f"💰 **Wallet: {d['capital']:.2f}$** | Actif: {d['running']}"
         pos_list = d.get('positions', {})
         if pos_list:
-            msg += "🚀 **POSITIONS :**\n"
-            for s, p in pos_list.items():
-                msg += f"📈 `{s}` | Taille: `{p['size']:.4f}`\n"
-        else:
-            msg += "💤 Aucune position."
-            
+            msg += "\n🚀 **POSITIONS :**\n" + "\n".join([f"📈 `{s}` : Taille `{p['size']:.4f}`" for s, p in pos_list.items()])
+        else: msg += "\n💤 Aucune position."
         await interaction.followup.send(msg)
 
 @bot.command()
