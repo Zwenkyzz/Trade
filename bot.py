@@ -1,14 +1,15 @@
-import discord, json, os
+import discord, json, os, asyncio
 from discord.ext import commands, tasks
 from discord import ui
 from engine.data_collector import DataCollector
 from engine.analyser import TJREngine
 from dotenv import load_dotenv
 
-# Charge les variables
+# Charge les variables depuis config/.env
 basedir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(basedir, 'config/.env'))
 
+# Configuration
 TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))
 STATE_FILE = os.path.join(basedir, "data/state.json")
@@ -29,7 +30,7 @@ def get_state():
 def save_state(data):
     with open(STATE_FILE, "w") as f: json.dump(data, f)
 
-@tasks.loop(seconds=30) # Augmentation du temps de pause pour stabiliser
+@tasks.loop(seconds=10)
 async def trading_loop():
     data = get_state()
     if not data.get("running", False): return
@@ -37,8 +38,7 @@ async def trading_loop():
     channel = bot.get_channel(CHANNEL_ID)
     if not channel: return
 
-    # Liste optimisée : BTC, ETH, SOL, EUR/USDT (via CCXT FX)
-    for symbol in ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'EUR/USDT']:
+    for symbol in ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'PEPE/USDT', 'DOGE/USDT', 'ADA/USDT', 'BNB/USDT', 'DOT/USDT']:
         try:
             df = DataCollector().get_latest_candles(symbol, timeframe='15m', limit=50)
             engine = TJREngine(df)
@@ -78,19 +78,23 @@ class MainView(ui.View):
 
     @ui.button(label="💀 FORCE SELL", style=discord.ButtonStyle.danger)
     async def force_sell(self, interaction, button):
-        d = get_state(); d['positions'] = {}; save_state(d)
-        await interaction.response.send_message("💀 Positions vidées.")
+        await interaction.response.send_message("💀 Fermeture en cours...")
+        d = get_state()
+        d['capital'] = d['capital'] + sum([p['size'] * p['entry'] for p in d['positions'].values()])
+        d['positions'] = {}
+        save_state(d)
+        await interaction.edit_original_response(content="💀 Positions vidées.")
 
     @ui.button(label="📊 STATS", style=discord.ButtonStyle.blurple)
     async def stats(self, interaction, button):
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.send_message("📊 Calcul des stats...")
         d = get_state()
         msg = f"💰 **Wallet: {d['capital']:.2f}$** | Actif: {d['running']}"
         pos_list = d.get('positions', {})
         if pos_list:
             msg += "\n🚀 **POSITIONS :**\n" + "\n".join([f"📈 `{s}` : Taille `{p['size']:.4f}`" for s, p in pos_list.items()])
         else: msg += "\n💤 Aucune position."
-        await interaction.followup.send(msg)
+        await interaction.edit_original_response(content=msg)
 
 @bot.command()
 async def trade(ctx):
