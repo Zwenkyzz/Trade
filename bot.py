@@ -78,8 +78,22 @@ class MainView(ui.View):
 
     @ui.button(label="📊 STATS", style=discord.ButtonStyle.blurple)
     async def stats(self, interaction, button):
+        # 1. Réponse immédiate pour éviter le timeout
+        await interaction.response.defer(ephemeral=False)
+        
+        # 2. Maintenant on calcule et on envoie la mise à jour
         d = get_state()
-        await interaction.response.send_message(f"💰 **Wallet: {d['capital']:.2f}$** | Actif: {d['running']}")
+        msg = f"💰 **Wallet: {d['capital']:.2f}$** | Actif: {d['running']}\n"
+        
+        pos_list = d.get('positions', {})
+        if pos_list:
+            msg += "🚀 **POSITIONS :**\n"
+            for s, p in pos_list.items():
+                msg += f"📈 `{s}` | Taille: `{p['size']:.4f}`\n"
+        else:
+            msg += "💤 Aucune position."
+            
+        await interaction.followup.send(msg)
 
 @bot.command()
 async def trade(ctx):
