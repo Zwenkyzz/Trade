@@ -1,15 +1,17 @@
-import discord, json, os, time
+import discord, json, os
 from discord.ext import commands, tasks
 from discord import ui
 from engine.data_collector import DataCollector
 from engine.analyser import TJREngine
 from dotenv import load_dotenv
 
-# Configuration
-load_dotenv("config/.env")
+# Charge les variables
+basedir = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(basedir, 'config/.env'))
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/state.json")
+STATE_FILE = os.path.join(basedir, "data/state.json")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -27,7 +29,7 @@ def get_state():
 def save_state(data):
     with open(STATE_FILE, "w") as f: json.dump(data, f)
 
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=30) # Augmentation du temps de pause pour stabiliser
 async def trading_loop():
     data = get_state()
     if not data.get("running", False): return
@@ -35,7 +37,8 @@ async def trading_loop():
     channel = bot.get_channel(CHANNEL_ID)
     if not channel: return
 
-    for symbol in ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'PEPE/USDT', 'DOGE/USDT', 'ADA/USDT', 'BNB/USDT', 'DOT/USDT']:
+    # Liste optimisée : BTC, ETH, SOL, EUR/USDT (via CCXT FX)
+    for symbol in ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'EUR/USDT']:
         try:
             df = DataCollector().get_latest_candles(symbol, timeframe='15m', limit=50)
             engine = TJREngine(df)
